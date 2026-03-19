@@ -1,0 +1,27 @@
+# Environment
+.env
+venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Runtime data
+data/
+
+# Test
+.pytest_cache/
+documents/
+
+# macOS
+.DS_Store
+
+# IDE / Local settings
+.kiro/
+
+# AIDLC process files
+aidlc-docs/aidlc-state.md
+aidlc-docs/audit.md
+
+# Requirements (original drafts)
+requirements/

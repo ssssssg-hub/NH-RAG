@@ -1,0 +1,13 @@
+openai
+chromadb
+kuzu
+langchain
+langchain-openai
+langchain-community
+pydantic
+rich
+fastapi
+uvicorn
+sse-starlette
+pytest
+pytest-asyncio

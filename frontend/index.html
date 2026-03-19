@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NH-RAG</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="app" data-testid="app-container">
+        <header class="header" data-testid="header">
+            <div class="header-left">
+                <button id="newChatBtn" data-testid="new-chat-button" title="새 대화">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+                <span class="header-title">NH-RAG</span>
+            </div>
+        </header>
+
+        <main class="chat-area" id="chatArea" data-testid="chat-area">
+            <div class="welcome" id="welcomeMessage" data-testid="welcome-message">
+                <div class="welcome-icon">🧠</div>
+                <h2>NH-RAG</h2>
+                <p>사내 문서 기반 AI 어시스턴트</p>
+                <div class="suggestions" id="suggestions">
+                    <button class="suggestion-chip" data-q="사내 규정에 대해 알려줘">📋 사내 규정 안내</button>
+                    <button class="suggestion-chip" data-q="최근 업데이트된 문서가 있어?">📄 최근 문서 확인</button>
+                    <button class="suggestion-chip" data-q="업무 프로세스를 설명해줘">⚙️ 업무 프로세스</button>
+                </div>
+            </div>
+        </main>
+
+        <footer class="input-area" data-testid="input-area">
+            <div class="input-card">
+                <textarea
+                    id="messageInput"
+                    data-testid="message-input"
+                    placeholder="메시지를 입력하세요..."
+                    rows="1"
+                ></textarea>
+                <button id="sendBtn" data-testid="send-button" disabled title="전송">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+                </button>
+            </div>
+            <p class="input-hint">Enter로 전송 · Shift+Enter로 줄바꿈</p>
+        </footer>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>
