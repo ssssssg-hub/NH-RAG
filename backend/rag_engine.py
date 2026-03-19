@@ -1,10 +1,11 @@
 """RAG 검색 엔진 - Vector + Graph 하이브리드 검색 및 LLM 스트리밍.
 
 검색 흐름:
-1. 사용자 질의 → 벡터 임베딩 → ChromaDB 코사인 유사도 검색
-2. 사용자 질의 → LLM 엔티티 추출 → KùzuDB 1-hop 관계 탐색
-3. RRF(Reciprocal Rank Fusion)로 두 결과를 결합하여 최종 컨텍스트 구성
-4. 컨텍스트 + 대화 이력 → LLM 스트리밍 응답
+1. (멀티턴 시) 대화 이력 기반 query rewriting → 자립적 검색 질의 생성
+2. 검색 질의 → 벡터 임베딩 → ChromaDB 코사인 유사도 검색
+3. 검색 질의 → LLM 엔티티 추출 → KùzuDB 1-hop 관계 탐색
+4. RRF(Reciprocal Rank Fusion)로 두 결과를 결합하여 최종 컨텍스트 구성
+5. 컨텍스트 + 대화 이력 → LLM 스트리밍 응답
 """
 
 import json
@@ -47,14 +48,18 @@ class RAGEngine:
     def close(self):
         self._graph.close()
 
-    def search(self, query: str) -> tuple[str, list[Source]]:
+    def search(self, query: str, history: list[dict] | None = None) -> tuple[str, list[Source]]:
         """하이브리드 검색 수행. (context_text, sources) 반환."""
         try:
-            query_embedding = embed_text(query)
+            # 대화 이력이 있으면 query rewriting으로 자립적 검색 질의 생성
+            search_query = query
+            if history and len(history) >= 2:
+                search_query = self._rewrite_query(query, history)
+
+            query_embedding = embed_text(search_query)
             vector_results = self._chroma.search(query_embedding, top_k=VECTOR_SEARCH_TOP_K)
 
-            # Graph 검색: 질의에서 LLM으로 엔티티를 추출한 뒤 관계 탐색
-            entity_names = self._extract_query_entities(query)
+            entity_names = self._extract_query_entities(search_query)
             graph_results = []
             if entity_names:
                 graph_results = self._graph.search_related(entity_names, top_k=GRAPH_SEARCH_TOP_K)
@@ -65,6 +70,40 @@ class RAGEngine:
         except Exception as e:
             logger.error(f"검색 실패: {e}")
             return "", []
+
+    def _rewrite_query(self, query: str, history: list[dict]) -> str:
+        """대화 이력을 참고하여 대명사/생략을 해소한 자립적 검색 질의를 생성한다.
+
+        "그거 더 자세히 알려줘" → "NH-RAG 시스템의 하이브리드 검색에 대해 더 자세히 알려줘"
+        실패 시 원본 질의를 그대로 반환한다.
+        """
+        try:
+            # 최근 3턴(6메시지)만 참고하여 토큰 절약
+            recent = history[-6:]
+            history_text = "\n".join(f"{m['role']}: {m['content']}" for m in recent)
+
+            response = self._llm.chat.completions.create(
+                model=OPENAI_CHAT_MODEL,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "대화 이력과 현재 질문을 보고, 대명사나 생략된 내용을 해소하여 "
+                        "문서 검색에 적합한 독립적인 질문 하나로 다시 작성하세요.\n"
+                        "대화 이력에 의존하지 않아도 이해할 수 있는 질문이어야 합니다.\n"
+                        "질문만 출력하세요.\n\n"
+                        f"[대화 이력]\n{history_text}\n\n"
+                        f"[현재 질문]\n{query}"
+                    ),
+                }],
+                temperature=0,
+            )
+            rewritten = response.choices[0].message.content.strip()
+            if rewritten:
+                logger.info(f"Query rewrite: '{query}' → '{rewritten}'")
+                return rewritten
+        except Exception as e:
+            logger.warning(f"Query rewrite 실패, 원본 사용: {e}")
+        return query
 
     def _extract_query_entities(self, query: str) -> list[str]:
         """질의에서 핵심 엔티티명을 LLM으로 추출한다.
@@ -97,6 +136,7 @@ class RAGEngine:
 
         RRF 공식: score(d) = Σ 1/(K + rank)
         K=60은 RRF 논문의 권장값으로, 상위 랭크와 하위 랭크 간 점수 차이를 완화한다.
+        Graph 결과는 관련 문서의 청크를 찾아 RRF 스코어에 가산한다.
         """
         K = 60
         scores = defaultdict(float)
@@ -111,7 +151,15 @@ class RAGEngine:
                 scores[key] += 1.0 / (K + rank + 1)
                 chunk_map[key] = {"content": doc, "file_name": meta.get("file_name", "unknown"), "doc_id": meta.get("doc_id", "")}
 
-        # Graph 결과: 관계를 텍스트로 변환하여 컨텍스트에 추가
+        # Graph 결과: 관련 doc_id의 청크에 RRF 보너스 스코어 부여
+        if graph_results:
+            graph_doc_ids = {r.get("doc_id") for r in graph_results if r.get("doc_id")}
+            for rank, doc_id in enumerate(graph_doc_ids):
+                for key, chunk in chunk_map.items():
+                    if chunk["doc_id"] == doc_id:
+                        scores[key] += 1.0 / (K + rank + 1)
+
+        # Graph 관계를 텍스트로 변환하여 컨텍스트에 추가
         graph_context = ""
         if graph_results:
             relations = [f"{r.get('source', '')} --[{r.get('rel_subtype', r.get('rel_type', ''))}]--> {r.get('target', '')}" for r in graph_results]

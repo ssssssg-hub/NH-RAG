@@ -7,6 +7,7 @@ frontend/ 디렉토리의 정적 파일을 서빙한다.
 import json
 import logging
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import AsyncGenerator
@@ -34,10 +35,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-Memory 세션 저장소: {session_id: [{"role": "user"|"assistant", "content": "..."}]}
-sessions: dict[str, list[dict]] = {}
+# In-Memory 세션 저장소: {session_id: {"messages": [...], "last_access": timestamp}}
+SESSION_TTL = 3600  # 1시간 미사용 시 만료
+MAX_SESSIONS = 100  # 최대 세션 수
+sessions: dict[str, dict] = {}
 
 rag_engine = RAGEngine()
+
+
+def _cleanup_sessions():
+    """만료된 세션을 제거한다. 최대 세션 수 초과 시 가장 오래된 세션부터 제거."""
+    now = time.time()
+    expired = [sid for sid, s in sessions.items() if now - s["last_access"] > SESSION_TTL]
+    for sid in expired:
+        del sessions[sid]
+
+    # 최대 세션 수 초과 시 가장 오래된 세션 제거
+    if len(sessions) > MAX_SESSIONS:
+        sorted_sessions = sorted(sessions.items(), key=lambda x: x[1]["last_access"])
+        for sid, _ in sorted_sessions[:len(sessions) - MAX_SESSIONS]:
+            del sessions[sid]
+
+
+def _get_or_create_session(session_id: str | None) -> tuple[str, list[dict]]:
+    """세션을 조회하거나 새로 생성한다. 접근 시각을 갱신한다."""
+    _cleanup_sessions()
+    if session_id and session_id in sessions:
+        sessions[session_id]["last_access"] = time.time()
+        return session_id, sessions[session_id]["messages"]
+
+    new_id = str(uuid.uuid4())[:8]
+    sessions[new_id] = {"messages": [], "last_access": time.time()}
+    return new_id, sessions[new_id]["messages"]
 
 
 class ChatRequest(BaseModel):
@@ -51,8 +80,9 @@ class NewSessionResponse(BaseModel):
 
 @app.post("/api/chat/new")
 async def new_session() -> NewSessionResponse:
+    _cleanup_sessions()
     session_id = str(uuid.uuid4())[:8]
-    sessions[session_id] = []
+    sessions[session_id] = {"messages": [], "last_access": time.time()}
     return NewSessionResponse(session_id=session_id)
 
 
@@ -60,30 +90,30 @@ async def new_session() -> NewSessionResponse:
 async def chat_history(session_id: str):
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
-    return {"session_id": session_id, "messages": sessions[session_id]}
+    sessions[session_id]["last_access"] = time.time()
+    return {"session_id": session_id, "messages": sessions[session_id]["messages"]}
 
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    session_id = request.session_id
-    if not session_id or session_id not in sessions:
-        session_id = str(uuid.uuid4())[:8]
-        sessions[session_id] = []
+    session_id, history = _get_or_create_session(request.session_id)
 
-    history = sessions[session_id]
     history.append({"role": "user", "content": request.message})
 
     # 컨텍스트 윈도우 초과 방지: 최근 20턴(40메시지)만 유지
     if len(history) > 40:
-        sessions[session_id] = history[-40:]
-        history = sessions[session_id]
+        del history[:len(history) - 40]
 
     async def event_generator() -> AsyncGenerator[dict, None]:
         """SSE 이벤트 순서: session → token(반복) → sources → done"""
         try:
-            context, sources = rag_engine.search(request.message)
+            context, sources = rag_engine.search(request.message, history)
 
             yield {"event": "session", "data": json.dumps({"session_id": session_id})}
+
+            # 검색 결과가 없으면 사용자에게 안내
+            if not context:
+                yield {"event": "no_results", "data": ""}
 
             full_response = ""
             async for event in rag_engine.generate_stream(request.message, context, history):

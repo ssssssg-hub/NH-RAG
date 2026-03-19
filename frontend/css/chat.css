@@ -110,6 +110,67 @@
 .message-content strong { color: #fff; }
 
 .message-error .message-content { color: var(--error); }
+.message-cancelled .message-content { color: var(--text-secondary); font-style: italic; }
+
+/* Status Indicator */
+
+.status-indicator {
+    color: var(--text-secondary);
+    font-size: 13px;
+    animation: fadeIn 0.3s ease;
+}
+
+/* Copy Buttons */
+
+.copy-message-btn {
+    margin-top: 8px;
+    padding: 4px 10px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.copy-message-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.code-block-wrapper {
+    position: relative;
+}
+
+.copy-code-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.code-block-wrapper:hover .copy-code-btn { opacity: 1; }
+
+/* No Results Banner */
+
+.no-results-banner {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(255, 193, 7, 0.08);
+    border: 1px solid rgba(255, 193, 7, 0.2);
+    border-radius: 8px;
+    color: #ffc107;
+    font-size: 12px;
+}
 
 /* Typing Indicator */
 

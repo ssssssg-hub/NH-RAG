@@ -63,11 +63,25 @@
 
 #sendBtn:disabled { opacity: 0.25; cursor: not-allowed; }
 
+#sendBtn.stop-mode {
+    background: var(--error);
+}
+
+#sendBtn.stop-mode:hover {
+    background: #ff5252;
+    box-shadow: 0 0 16px rgba(255, 107, 107, 0.25);
+}
+
 .input-hint {
     margin-top: 8px;
     font-size: 11px;
     color: var(--text-secondary);
     opacity: 0.6;
+}
+
+.input-hint.char-warning {
+    color: var(--error);
+    opacity: 1;
 }
 
 @media (max-width: 600px) {

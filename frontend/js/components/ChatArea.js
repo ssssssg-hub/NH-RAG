@@ -9,8 +9,8 @@
  */
 
 import { state } from "../state.js";
-import { createElement, renderMarkdown } from "../utils.js";
-import { sendChat, processSSEStream } from "./api.js";
+import { createElement, renderMarkdown, bindCopyButtons, addMessageCopyButton } from "../utils.js";
+import { sendChat, processSSEStream, fetchHistory } from "./api.js";
 import { renderSources } from "./Sources.js";
 
 const WELCOME_HTML =
@@ -25,8 +25,14 @@ const WELCOME_HTML =
         "</div>" +
     "</div>";
 
+const STATUS_MESSAGES = {
+    searching: "🔍 문서 검색 중...",
+    generating: "✍️ 응답 생성 중...",
+};
+
 let chatArea;
 let onSendCallback;
+let currentAbort = null;
 
 export function initChatArea({ onSend }) {
     chatArea = document.getElementById("chatArea");
@@ -39,6 +45,14 @@ export function showWelcome() {
     bindSuggestionChips();
 }
 
+/** 스트리밍 중이면 취소한다. */
+export function stopStreaming() {
+    if (currentAbort) {
+        currentAbort();
+        currentAbort = null;
+    }
+}
+
 export async function handleSend(text) {
     removeWelcome();
     appendMessage("user", text);
@@ -46,19 +60,42 @@ export async function handleSend(text) {
     state.isStreaming = true;
     const aiRow = appendMessage("ai", "");
     const contentEl = aiRow.querySelector(".message-content");
-    showTypingIndicator(contentEl);
+    showStatusIndicator(contentEl, "searching");
 
     try {
-        const response = await sendChat(text);
+        const { response, abort } = sendChat(text);
+        currentAbort = abort;
+
+        const res = await response;
+        showStatusIndicator(contentEl, "generating");
+
         // 스트리밍 중에는 textContent로 실시간 표시, 완료 후 마크다운 렌더링
-        const fullText = await processSSEStream(response, (event, data) => {
+        const fullText = await processSSEStream(res, (event, data) => {
             handleSSEEvent(event, data, contentEl, aiRow);
         });
-        if (fullText) contentEl.innerHTML = renderMarkdown(fullText);
-    } catch {
-        contentEl.textContent = "응답 생성에 실패했습니다. 다시 시도해주세요.";
-        aiRow.classList.add("message-error");
+        if (fullText) {
+            contentEl.innerHTML = renderMarkdown(fullText);
+            bindCopyButtons(contentEl);
+            addMessageCopyButton(aiRow.querySelector(".message-body"), fullText);
+        }
+    } catch (e) {
+        if (e.name === "AbortError") {
+            // 사용자가 취소한 경우
+            removeStatusIndicator(contentEl);
+            if (!contentEl.textContent) {
+                contentEl.textContent = "응답이 취소되었습니다.";
+                aiRow.classList.add("message-cancelled");
+            } else {
+                contentEl.innerHTML = renderMarkdown(contentEl.textContent);
+                bindCopyButtons(contentEl);
+                addMessageCopyButton(aiRow.querySelector(".message-body"), contentEl.textContent);
+            }
+        } else {
+            contentEl.textContent = "응답 생성에 실패했습니다. 다시 시도해주세요.";
+            aiRow.classList.add("message-error");
+        }
     } finally {
+        currentAbort = null;
         state.isStreaming = false;
     }
 }
@@ -69,9 +106,13 @@ function handleSSEEvent(event, data, contentEl, aiRow) {
             try { state.sessionId = JSON.parse(data).session_id; } catch {}
             break;
         case "token":
-            removeTypingIndicator(contentEl);
+            removeStatusIndicator(contentEl);
             contentEl.textContent += data;
             scrollToBottom();
+            break;
+        case "no_results":
+            removeStatusIndicator(contentEl);
+            showNoResultsBanner(aiRow.querySelector(".message-body"));
             break;
         case "sources":
             try {
@@ -107,18 +148,27 @@ function appendMessage(role, text) {
     return row;
 }
 
-function showTypingIndicator(el) {
-    el.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+function showStatusIndicator(el, phase) {
+    const msg = STATUS_MESSAGES[phase] || "";
+    el.innerHTML = `<div class="status-indicator">${msg}</div>`;
 }
 
-function removeTypingIndicator(el) {
-    const indicator = el.querySelector(".typing-indicator");
+function removeStatusIndicator(el) {
+    const indicator = el.querySelector(".status-indicator");
     if (indicator) indicator.remove();
 }
 
 function removeWelcome() {
     const welcome = chatArea.querySelector(".welcome");
     if (welcome) welcome.remove();
+}
+
+function showNoResultsBanner(bodyEl) {
+    const banner = createElement("div", {
+        className: "no-results-banner",
+        textContent: "⚠️ 관련 문서를 찾지 못했습니다. 임베딩된 문서가 없거나 질문과 관련된 내용이 없을 수 있습니다.",
+    });
+    bodyEl.insertBefore(banner, bodyEl.querySelector(".message-content").nextSibling);
 }
 
 function scrollToBottom() {
@@ -130,4 +180,24 @@ function bindSuggestionChips() {
     chatArea.querySelectorAll(".suggestion-chip").forEach((chip) => {
         chip.addEventListener("click", () => onSendCallback(chip.getAttribute("data-q")));
     });
+}
+
+/** 서버에서 대화 이력을 불러와 화면에 복원한다. */
+export async function restoreHistory() {
+    const data = await fetchHistory(state.sessionId);
+    if (!data || !data.messages || data.messages.length === 0) return;
+
+    removeWelcome();
+    for (const msg of data.messages) {
+        const role = msg.role === "assistant" ? "ai" : msg.role;
+        const row = appendMessage(role, "");
+        const contentEl = row.querySelector(".message-content");
+        if (role === "ai") {
+            contentEl.innerHTML = renderMarkdown(msg.content);
+            bindCopyButtons(contentEl);
+            addMessageCopyButton(row.querySelector(".message-body"), msg.content);
+        } else {
+            contentEl.textContent = msg.content;
+        }
+    }
 }

@@ -20,14 +20,34 @@ export async function createSession() {
     }
 }
 
-export async function sendChat(message) {
-    const response = await fetch(API.CHAT, {
+/** 세션 이력을 조회한다. 세션이 없거나 만료되면 null 반환. */
+export async function fetchHistory(sessionId) {
+    if (!sessionId) return null;
+    try {
+        const res = await fetch(`${API.CHAT}/history?session_id=${sessionId}`);
+        if (!res.ok) return null;
+        return await res.json();
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 채팅 메시지를 전송한다. AbortController를 반환하여 취소를 지원한다.
+ * @returns {{ response: Promise<Response>, abort: Function }}
+ */
+export function sendChat(message) {
+    const controller = new AbortController();
+    const response = fetch(API.CHAT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, session_id: state.sessionId }),
+        signal: controller.signal,
+    }).then((res) => {
+        if (!res.ok) throw new Error("서버 오류");
+        return res;
     });
-    if (!response.ok) throw new Error("서버 오류");
-    return response;
+    return { response, abort: () => controller.abort() };
 }
 
 /**
@@ -47,24 +67,29 @@ export async function processSSEStream(response, onEvent) {
     let eventType = "";
     let fullText = "";
 
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        // 마지막 줄은 불완전할 수 있으므로 다음 청크와 합친다
-        buffer = lines.pop() || "";
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            // 마지막 줄은 불완전할 수 있으므로 다음 청크와 합친다
+            buffer = lines.pop() || "";
 
-        for (const line of lines) {
-            if (line.startsWith("event:")) {
-                eventType = line.slice(6).trim();
-            } else if (line.startsWith("data:")) {
-                const data = line.slice(5).trim();
-                if (eventType === "token") fullText += data;
-                onEvent(eventType, data);
+            for (const line of lines) {
+                if (line.startsWith("event:")) {
+                    eventType = line.slice(6).trim();
+                } else if (line.startsWith("data:")) {
+                    const data = line.slice(5).trim();
+                    if (eventType === "token") fullText += data;
+                    onEvent(eventType, data);
+                }
             }
         }
+    } catch (e) {
+        // AbortError는 사용자가 취소한 것이므로 무시
+        if (e.name !== "AbortError") throw e;
     }
 
     return fullText;
