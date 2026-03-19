@@ -1,4 +1,10 @@
-"""DB 접근 모듈 - ChromaDB, KùzuDB, SQLite."""
+"""DB 접근 모듈 - ChromaDB, KùzuDB, SQLite.
+
+세 가지 저장소를 Repository 패턴으로 추상화한다.
+- ChromaDB: 벡터 임베딩 저장/검색 (코사인 유사도)
+- KùzuDB: 엔티티-관계 지식 그래프 (임베디드 그래프 DB)
+- SQLite: 문서 메타데이터 및 배치 실행 이력
+"""
 
 import json
 import logging
@@ -26,6 +32,7 @@ class ChromaRepository:
     def __init__(self):
         os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
         self._client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
+        # hnsw:space=cosine → 코사인 유사도 기반 ANN 인덱스
         self._collection = self._client.get_or_create_collection(
             name=CHROMA_COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
         )
@@ -43,6 +50,7 @@ class ChromaRepository:
             logger.warning(f"ChromaDB 삭제 실패 (doc_id={doc_id}): {e}")
 
     def reset(self):
+        """컬렉션을 삭제 후 재생성하여 전체 데이터를 초기화한다."""
         self._client.delete_collection(CHROMA_COLLECTION_NAME)
         self._collection = self._client.get_or_create_collection(
             name=CHROMA_COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
@@ -53,6 +61,12 @@ class ChromaRepository:
 
 
 class KuzuRepository:
+    """KùzuDB 지식 그래프 저장소.
+
+    초기화 실패 시 Graph 검색을 비활성화하고 Vector 검색만으로 동작한다.
+    (Graceful Degradation - KùzuDB 없이도 서비스 가능)
+    """
+
     def __init__(self):
         try:
             os.makedirs(os.path.dirname(KUZU_DB_PATH), exist_ok=True)
@@ -66,6 +80,11 @@ class KuzuRepository:
             logger.warning(f"KùzuDB 초기화 실패 (Graph 검색 비활성화): {e}")
 
     def _init_schema(self):
+        """Entity 노드와 RELATES 관계 테이블을 생성한다.
+
+        Entity: name(PK), type(CONCEPT/PERSON/SYSTEM 등), doc_id(출처 문서)
+        RELATES: 엔티티 간 관계 (type: RELATED_TO/PART_OF/USES 등)
+        """
         try:
             self._conn.execute("CREATE NODE TABLE IF NOT EXISTS Entity(name STRING, type STRING, doc_id STRING, PRIMARY KEY(name))")
             self._conn.execute("CREATE REL TABLE IF NOT EXISTS RELATES(FROM Entity TO Entity, type STRING, doc_id STRING)")
@@ -83,6 +102,7 @@ class KuzuRepository:
     def upsert_entities(self, doc_id: str, entities: list[dict], relations: list[dict]):
         if not self.available:
             return
+        # MERGE: 동일 name의 엔티티가 있으면 업데이트, 없으면 생성
         for entity in entities:
             self._conn.execute(
                 "MERGE (e:Entity {name: $name}) SET e.type = $type, e.doc_id = $doc_id",
@@ -100,6 +120,10 @@ class KuzuRepository:
                 pass  # 중복 관계 무시
 
     def search_related(self, entity_names: list[str], top_k: int = 5) -> list[dict]:
+        """엔티티명 목록으로 1-hop 관계를 탐색한다.
+
+        양방향 탐색(-[r:RELATES]-)으로 incoming/outgoing 관계 모두 반환.
+        """
         if not self.available:
             return []
         results = []
@@ -120,6 +144,10 @@ class KuzuRepository:
         return results
 
     def delete_by_doc(self, doc_id: str):
+        """문서에 속한 관계 → 엔티티 순서로 삭제한다.
+
+        관계를 먼저 삭제해야 엔티티 삭제 시 참조 무결성 오류가 발생하지 않는다.
+        """
         if not self.available:
             return
         try:
@@ -142,6 +170,12 @@ class KuzuRepository:
 
 
 class SQLiteRepository:
+    """문서 메타데이터와 배치 실행 이력을 관리한다.
+
+    document_meta: 증분 임베딩을 위한 파일 해시 및 상태 추적
+    batch_log: 배치 실행 결과 기록 (모드, 처리/실패/삭제 건수)
+    """
+
     def __init__(self):
         os.makedirs(os.path.dirname(SQLITE_DB_PATH), exist_ok=True)
         self._conn = sqlite3.connect(SQLITE_DB_PATH)
@@ -183,6 +217,7 @@ class SQLiteRepository:
         self._conn.commit()
 
     def get_all_doc_hashes(self) -> dict[str, str]:
+        """증분 임베딩 시 변경 감지를 위해 기존 문서의 해시를 조회한다."""
         rows = self._conn.execute("SELECT doc_id, file_hash FROM document_meta WHERE status != 'deleted'").fetchall()
         return {row["doc_id"]: row["file_hash"] for row in rows}
 

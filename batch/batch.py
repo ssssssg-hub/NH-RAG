@@ -1,4 +1,9 @@
-"""Batch 임베딩 실행 스크립트."""
+"""Batch 임베딩 실행 스크립트.
+
+실행 모드:
+- incremental (기본): SHA-256 해시 비교로 변경된 문서만 처리
+- full (--full): 모든 DB를 초기화하고 전체 문서를 재임베딩
+"""
 
 import argparse
 import logging
@@ -11,7 +16,6 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.table import Table
 
-# 프로젝트 루트를 sys.path에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from batch.embedding import (
@@ -32,34 +36,31 @@ console = Console()
 
 
 def process_document(doc_id: str, file_path: str, file_hash: str, chroma: ChromaRepository, kuzu: KuzuRepository, sqlite: SQLiteRepository) -> bool:
-    """단일 문서 임베딩 처리. 성공 시 True."""
+    """단일 문서의 임베딩 파이프라인: 파싱 → 청킹 → 벡터 임베딩 → 엔티티 추출 → 저장."""
     try:
         ext = Path(file_path).suffix.lower()
 
-        # 파싱
         texts = parse_document(file_path)
         if not texts:
             return False
 
-        # 청킹
         chunks = chunk_texts(texts)
         if not chunks:
             logger.warning(f"청크 생성 실패: {doc_id}")
             return False
 
-        # 기존 데이터 삭제 (upsert 전 정리)
+        # 기존 데이터를 먼저 삭제하여 upsert 시 고아 청크가 남지 않도록 한다
         chroma.delete_by_doc(doc_id)
         kuzu.delete_by_doc(doc_id)
 
-        # 임베딩
         embeddings = embed_texts(chunks)
         chunk_ids = [f"{doc_id}##{i}" for i in range(len(chunks))]
         metadatas = [{"doc_id": doc_id, "chunk_index": i, "file_name": Path(file_path).name} for i in range(len(chunks))]
         chroma.upsert(doc_id, chunk_ids, chunks, embeddings, metadatas)
 
-        # 엔티티 추출 (청크 단위, 실패해도 계속)
+        # 상위 5개 청크만 엔티티 추출 (LLM API 비용 절감)
         all_entities, all_relations = [], []
-        for chunk in chunks[:5]:  # 상위 5개 청크만 추출 (비용 절감)
+        for chunk in chunks[:5]:
             result = extract_entities(chunk)
             all_entities.extend([e.model_dump() for e in result.entities])
             all_relations.extend([r.model_dump() for r in result.relations])
@@ -67,7 +68,6 @@ def process_document(doc_id: str, file_path: str, file_hash: str, chroma: Chroma
         if all_entities:
             kuzu.upsert_entities(doc_id, all_entities, all_relations)
 
-        # 메타데이터 저장
         sqlite.save_doc_meta(doc_id, file_path, file_hash, ext, "embedded", len(chunks))
         return True
 
@@ -95,12 +95,12 @@ def run(full: bool = False):
             chroma.reset()
             kuzu.reset()
             sqlite.reset()
-            # 전체 모드: 모든 파일 처리
             current_files = scan_documents(DOCUMENTS_DIR)
             targets = [(doc_id, fpath, compute_file_hash(fpath)) for doc_id, fpath in current_files.items()]
             deleted = []
             skipped = 0
         else:
+            # 증분 모드: 기존 해시와 비교하여 변경분만 처리
             existing_hashes = sqlite.get_all_doc_hashes()
             changes = detect_changes(DOCUMENTS_DIR, existing_hashes)
             targets = changes["new"] + changes["modified"]
@@ -123,13 +123,12 @@ def run(full: bool = False):
                         failed += 1
                     progress.advance(task)
 
-            # 삭제 처리
+            # 디렉토리에서 삭제된 문서의 데이터를 3개 DB에서 모두 제거
             for doc_id in deleted:
                 chroma.delete_by_doc(doc_id)
                 kuzu.delete_by_doc(doc_id)
                 sqlite.delete_doc_meta(doc_id)
 
-        # 결과 요약
         table = Table(title="실행 결과")
         table.add_column("항목", style="cyan")
         table.add_column("값", style="green")
@@ -141,7 +140,6 @@ def run(full: bool = False):
         table.add_row("삭제", str(len(deleted)))
         console.print(table)
 
-        # Batch 로그 저장
         sqlite.save_batch_log(run_id, mode, total + skipped + len(deleted), processed, skipped, failed, len(deleted), started_at)
 
     finally:

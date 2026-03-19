@@ -1,4 +1,11 @@
-"""RAG 검색 엔진 - Vector + Graph 하이브리드 검색 및 LLM 스트리밍."""
+"""RAG 검색 엔진 - Vector + Graph 하이브리드 검색 및 LLM 스트리밍.
+
+검색 흐름:
+1. 사용자 질의 → 벡터 임베딩 → ChromaDB 코사인 유사도 검색
+2. 사용자 질의 → LLM 엔티티 추출 → KùzuDB 1-hop 관계 탐색
+3. RRF(Reciprocal Rank Fusion)로 두 결과를 결합하여 최종 컨텍스트 구성
+4. 컨텍스트 + 대화 이력 → LLM 스트리밍 응답
+"""
 
 import json
 import logging
@@ -43,17 +50,15 @@ class RAGEngine:
     def search(self, query: str) -> tuple[str, list[Source]]:
         """하이브리드 검색 수행. (context_text, sources) 반환."""
         try:
-            # Vector 검색
             query_embedding = embed_text(query)
             vector_results = self._chroma.search(query_embedding, top_k=VECTOR_SEARCH_TOP_K)
 
-            # Graph 검색: 질의에서 엔티티 추출 후 관계 탐색
+            # Graph 검색: 질의에서 LLM으로 엔티티를 추출한 뒤 관계 탐색
             entity_names = self._extract_query_entities(query)
             graph_results = []
             if entity_names:
                 graph_results = self._graph.search_related(entity_names, top_k=GRAPH_SEARCH_TOP_K)
 
-            # 결과 결합
             context_text, sources = self._merge_results(vector_results, graph_results)
             return context_text, sources
 
@@ -62,7 +67,11 @@ class RAGEngine:
             return "", []
 
     def _extract_query_entities(self, query: str) -> list[str]:
-        """질의에서 핵심 엔티티명 추출 (LLM 기반)."""
+        """질의에서 핵심 엔티티명을 LLM으로 추출한다.
+
+        Graph 검색의 시작점이 되는 엔티티를 결정하는 단계.
+        실패 시 빈 리스트를 반환하여 Vector 검색만으로 동작한다.
+        """
         try:
             response = self._llm.chat.completions.create(
                 model=OPENAI_CHAT_MODEL,
@@ -73,6 +82,7 @@ class RAGEngine:
                 temperature=0,
             )
             content = response.choices[0].message.content.strip()
+            # LLM이 마크다운 코드블록으로 감싸는 경우 처리
             if "```" in content:
                 content = content.split("```")[1].split("```")[0].strip()
                 if content.startswith("json"):
@@ -83,12 +93,16 @@ class RAGEngine:
             return []
 
     def _merge_results(self, vector_results: dict, graph_results: list[dict]) -> tuple[str, list[Source]]:
-        """RRF로 Vector + Graph 결과 결합."""
+        """RRF(Reciprocal Rank Fusion)로 Vector + Graph 결과를 결합한다.
+
+        RRF 공식: score(d) = Σ 1/(K + rank)
+        K=60은 RRF 논문의 권장값으로, 상위 랭크와 하위 랭크 간 점수 차이를 완화한다.
+        """
         K = 60
         scores = defaultdict(float)
         chunk_map = {}
 
-        # Vector 결과 스코어링
+        # Vector 결과: 랭크 기반 RRF 스코어 부여
         if vector_results and vector_results.get("documents"):
             docs = vector_results["documents"][0]
             metas = vector_results["metadatas"][0] if vector_results.get("metadatas") else [{}] * len(docs)
@@ -97,16 +111,15 @@ class RAGEngine:
                 scores[key] += 1.0 / (K + rank + 1)
                 chunk_map[key] = {"content": doc, "file_name": meta.get("file_name", "unknown"), "doc_id": meta.get("doc_id", "")}
 
-        # Graph 결과를 context에 추가
+        # Graph 결과: 관계를 텍스트로 변환하여 컨텍스트에 추가
         graph_context = ""
         if graph_results:
             relations = [f"{r.get('source', '')} --[{r.get('rel_subtype', r.get('rel_type', ''))}]--> {r.get('target', '')}" for r in graph_results]
             graph_context = "\n[관련 지식 그래프]\n" + "\n".join(relations)
 
-        # 스코어 기준 정렬
         sorted_keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
 
-        # Context 구성
+        # 상위 K개 청크를 컨텍스트로 구성하고, 파일별 첫 200자를 출처 발췌로 사용
         context_parts = []
         source_map = {}
         for key in sorted_keys[:VECTOR_SEARCH_TOP_K]:
@@ -124,13 +137,15 @@ class RAGEngine:
         return context_text, sources
 
     async def generate_stream(self, query: str, context: str, history: list[dict]) -> AsyncGenerator[dict, None]:
-        """LLM 스트리밍 응답 생성."""
+        """LLM 스트리밍 응답 생성.
+
+        메시지 구성: system prompt → 참조 문서 컨텍스트 → 대화 이력(최근 20턴) → 현재 질의
+        """
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
         if context:
             messages.append({"role": "system", "content": f"[참조 문서]\n{context}"})
 
-        # 대화 이력 추가 (최근 20턴)
         for msg in history[-20:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
 

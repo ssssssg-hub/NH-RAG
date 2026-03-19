@@ -1,0 +1,40 @@
+/* Sources 접이식 UI */
+
+.sources {
+    margin-top: 14px;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+}
+
+.sources-toggle {
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+    background: none;
+    border: none;
+    padding: 4px 0;
+    transition: opacity 0.2s;
+}
+
+.sources-toggle:hover { opacity: 0.7; }
+
+.sources-list {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.sources-list.open { display: flex; }
+
+.source-item {
+    background: var(--source-bg);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    border: 1px solid rgba(108, 92, 231, 0.1);
+}
+
+.source-item .source-name { color: #a29bfe; font-weight: 600; }
+.source-item .source-excerpt { color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }

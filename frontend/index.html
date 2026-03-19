@@ -4,7 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NH-RAG</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/base.css">
+    <link rel="stylesheet" href="/css/header.css">
+    <link rel="stylesheet" href="/css/chat.css">
+    <link rel="stylesheet" href="/css/input.css">
+    <link rel="stylesheet" href="/css/sources.css">
 </head>
 <body>
     <div class="app" data-testid="app-container">
@@ -22,7 +26,7 @@
                 <div class="welcome-icon">🧠</div>
                 <h2>NH-RAG</h2>
                 <p>사내 문서 기반 AI 어시스턴트</p>
-                <div class="suggestions" id="suggestions">
+                <div class="suggestions">
                     <button class="suggestion-chip" data-q="사내 규정에 대해 알려줘">📋 사내 규정 안내</button>
                     <button class="suggestion-chip" data-q="최근 업데이트된 문서가 있어?">📄 최근 문서 확인</button>
                     <button class="suggestion-chip" data-q="업무 프로세스를 설명해줘">⚙️ 업무 프로세스</button>
@@ -46,6 +50,6 @@
         </footer>
     </div>
 
-    <script src="/js/app.js"></script>
+    <script type="module" src="/js/app.js"></script>
 </body>
 </html>

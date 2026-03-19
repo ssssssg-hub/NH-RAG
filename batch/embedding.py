@@ -1,4 +1,8 @@
-"""문서 파싱, 청킹, 임베딩, 엔티티 추출 모듈."""
+"""문서 파싱, 청킹, 엔티티 추출, 변경 감지 모듈.
+
+배치 임베딩 파이프라인의 핵심 처리 단계를 담당한다:
+파일 읽기 → 텍스트 청킹 → LLM 엔티티/관계 추출 → SHA-256 변경 감지
+"""
 
 import hashlib
 import json
@@ -45,7 +49,7 @@ class ExtractionResult(BaseModel):
 
 # ── 문서 파싱 ─────────────────────────────────────────────
 
-
+# 확장자별 LangChain 로더 매핑
 LOADERS = {
     ".txt": lambda p: TextLoader(p, encoding="utf-8"),
     ".csv": lambda p: CSVLoader(p, encoding="utf-8"),
@@ -66,7 +70,7 @@ def parse_document(file_path: str) -> list[str]:
 
 # ── 청킹 ─────────────────────────────────────────────────
 
-
+# 구분자 우선순위: 문단 > 줄바꿈 > 문장 > 단어 > 문자
 _splitter = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
     chunk_overlap=CHUNK_OVERLAP,
@@ -82,7 +86,7 @@ def chunk_texts(texts: list[str]) -> list[str]:
 
 # ── 엔티티 추출 ──────────────────────────────────────────
 
-
+# LLM에게 구조화된 JSON으로 엔티티/관계를 추출하도록 지시하는 프롬프트
 EXTRACTION_PROMPT = """다음 텍스트에서 핵심 엔티티(개념, 용어, 인물, 조직, 시스템, 프로세스)와 엔티티 간 관계를 추출하세요.
 
 텍스트:
@@ -103,7 +107,11 @@ def _get_llm_client() -> OpenAI:
 
 
 def extract_entities(text: str) -> ExtractionResult:
-    """LLM으로 텍스트에서 엔티티/관계 추출."""
+    """LLM으로 텍스트에서 엔티티/관계를 추출한다.
+
+    입력 텍스트를 3000자로 제한하여 토큰 비용을 절감한다.
+    실패 시 빈 결과를 반환하여 임베딩 파이프라인이 중단되지 않는다.
+    """
     try:
         client = _get_llm_client()
         response = client.chat.completions.create(
@@ -112,7 +120,7 @@ def extract_entities(text: str) -> ExtractionResult:
             temperature=0,
         )
         content = response.choices[0].message.content.strip()
-        # JSON 파싱 시도
+        # LLM이 마크다운 코드블록으로 감싸는 경우 처리
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
@@ -128,7 +136,7 @@ def extract_entities(text: str) -> ExtractionResult:
 
 
 def compute_file_hash(file_path: str) -> str:
-    """파일 SHA-256 해시 계산."""
+    """파일 SHA-256 해시 계산. 8KB 단위로 읽어 대용량 파일도 처리 가능."""
     h = hashlib.sha256()
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
@@ -137,7 +145,10 @@ def compute_file_hash(file_path: str) -> str:
 
 
 def scan_documents(doc_dir: str) -> dict[str, str]:
-    """문서 디렉토리를 스캔하여 {doc_id: file_path} 반환. 지원 형식만."""
+    """문서 디렉토리를 재귀 스캔하여 {doc_id: file_path} 반환.
+
+    doc_id는 문서 디렉토리 기준 상대 경로를 사용한다.
+    """
     result = {}
     for root, _, files in os.walk(doc_dir):
         for fname in files:
@@ -150,7 +161,7 @@ def scan_documents(doc_dir: str) -> dict[str, str]:
 
 
 def detect_changes(doc_dir: str, existing_hashes: dict[str, str]) -> dict:
-    """변경 감지: new, modified, deleted, unchanged 분류."""
+    """현재 파일과 기존 해시를 비교하여 new/modified/deleted/unchanged로 분류한다."""
     current_files = scan_documents(doc_dir)
     new, modified, unchanged = [], [], []
 
@@ -163,6 +174,7 @@ def detect_changes(doc_dir: str, existing_hashes: dict[str, str]) -> dict:
         else:
             unchanged.append(doc_id)
 
+    # 디렉토리에서 사라진 파일 감지
     deleted = [doc_id for doc_id in existing_hashes if doc_id not in current_files]
 
     return {"new": new, "modified": modified, "deleted": deleted, "unchanged": unchanged}

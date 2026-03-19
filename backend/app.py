@@ -1,4 +1,8 @@
-"""FastAPI 백엔드 서버."""
+"""FastAPI 백엔드 서버.
+
+SSE(Server-Sent Events) 기반 스트리밍 채팅 API를 제공하고,
+frontend/ 디렉토리의 정적 파일을 서빙한다.
+"""
 
 import json
 import logging
@@ -14,7 +18,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-# 프로젝트 루트를 sys.path에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.rag_engine import RAGEngine
@@ -31,10 +34,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 세션 저장소 (in-memory)
+# In-Memory 세션 저장소: {session_id: [{"role": "user"|"assistant", "content": "..."}]}
 sessions: dict[str, list[dict]] = {}
 
-# RAG 엔진
 rag_engine = RAGEngine()
 
 
@@ -63,42 +65,35 @@ async def chat_history(session_id: str):
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    # 세션 관리
     session_id = request.session_id
     if not session_id or session_id not in sessions:
         session_id = str(uuid.uuid4())[:8]
         sessions[session_id] = []
 
     history = sessions[session_id]
-
-    # 사용자 메시지 기록
     history.append({"role": "user", "content": request.message})
 
-    # 이력 제한 (최근 20턴 = 40 메시지)
+    # 컨텍스트 윈도우 초과 방지: 최근 20턴(40메시지)만 유지
     if len(history) > 40:
         sessions[session_id] = history[-40:]
         history = sessions[session_id]
 
     async def event_generator() -> AsyncGenerator[dict, None]:
+        """SSE 이벤트 순서: session → token(반복) → sources → done"""
         try:
-            # RAG 검색
             context, sources = rag_engine.search(request.message)
 
-            # session_id 전송
             yield {"event": "session", "data": json.dumps({"session_id": session_id})}
 
-            # LLM 스트리밍
             full_response = ""
             async for event in rag_engine.generate_stream(request.message, context, history):
                 if event["event"] == "token":
                     full_response += event["data"]
                 yield {"event": event["event"], "data": event["data"]}
 
-            # assistant 메시지 기록
             if full_response:
                 history.append({"role": "assistant", "content": full_response})
 
-            # 출처 전송
             if sources:
                 sources_data = [s.model_dump() for s in sources]
                 yield {"event": "sources", "data": json.dumps(sources_data, ensure_ascii=False)}
@@ -112,7 +107,7 @@ async def chat(request: ChatRequest):
     return EventSourceResponse(event_generator())
 
 
-# 정적 파일 서빙 (frontend)
+# "/" 마운트는 모든 경로를 캐치하므로 API 라우트 등록 후 마지막에 설정
 frontend_path = Path(__file__).parent.parent / "frontend"
 if frontend_path.exists():
     app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
