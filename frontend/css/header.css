@@ -3,6 +3,7 @@
 .header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     padding: 12px 16px;
     border-bottom: 1px solid var(--border);
     background: var(--bg-primary);
@@ -38,6 +39,26 @@
 }
 
 #newChatBtn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+#themeToggleBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.2s;
+}
+
+#themeToggleBtn:hover {
     background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
 }

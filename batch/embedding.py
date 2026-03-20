@@ -106,30 +106,43 @@ def _get_llm_client() -> OpenAI:
     return _llm_client
 
 
-def extract_entities(text: str) -> ExtractionResult:
+def extract_entities(text: str, max_retries: int = 3) -> ExtractionResult:
     """LLM으로 텍스트에서 엔티티/관계를 추출한다.
 
     입력 텍스트를 3000자로 제한하여 토큰 비용을 절감한다.
+    Rate limit(429) 발생 시 retryDelay를 파싱하여 대기 후 재시도한다.
     실패 시 빈 결과를 반환하여 임베딩 파이프라인이 중단되지 않는다.
     """
-    try:
-        client = _get_llm_client()
-        response = client.chat.completions.create(
-            model=OPENAI_CHAT_MODEL,
-            messages=[{"role": "user", "content": EXTRACTION_PROMPT.format(text=text[:3000])}],
-            temperature=0,
-        )
-        content = response.choices[0].message.content.strip()
-        # LLM이 마크다운 코드블록으로 감싸는 경우 처리
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-        data = json.loads(content)
-        return ExtractionResult(**data)
-    except Exception as e:
-        logger.warning(f"엔티티 추출 실패: {e}")
-        return ExtractionResult()
+    import re
+    import time
+
+    for attempt in range(max_retries):
+        try:
+            client = _get_llm_client()
+            response = client.chat.completions.create(
+                model=OPENAI_CHAT_MODEL,
+                messages=[{"role": "user", "content": EXTRACTION_PROMPT.format(text=text[:3000])}],
+                temperature=0,
+            )
+            content = response.choices[0].message.content.strip()
+            # LLM이 마크다운 코드블록으로 감싸는 경우 처리
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            data = json.loads(content)
+            return ExtractionResult(**data)
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str and attempt < max_retries - 1:
+                match = re.search(r'retryDelay.*?(\d+)', err_str)
+                wait = int(match.group(1)) + 2 if match else 35
+                logger.info(f"Rate limit 도달, {wait}초 대기 후 재시도 ({attempt + 1}/{max_retries})")
+                time.sleep(wait)
+                continue
+            logger.warning(f"엔티티 추출 실패: {e}")
+            return ExtractionResult()
+    return ExtractionResult()
 
 
 # ── 변경 감지 ─────────────────────────────────────────────

@@ -1,5 +1,15 @@
 /** 유틸리티 함수 */
 
+import { marked } from "./lib/marked.esm.js";
+
+// marked 설정: XSS 방지를 위해 HTML 태그 비활성화, 코드블록에 복사 버튼 래핑
+const renderer = new marked.Renderer();
+const _origCode = renderer.code.bind(renderer);
+renderer.code = function ({ text, lang }) {
+    return `<div class="code-block-wrapper"><button class="copy-code-btn" title="복사">📋</button><pre><code>${text}</code></pre></div>`;
+};
+marked.setOptions({ renderer, breaks: true });
+
 /** textContent를 이용한 XSS-safe HTML 이스케이프 */
 export function escapeHtml(str) {
     const div = document.createElement("div");
@@ -7,15 +17,9 @@ export function escapeHtml(str) {
     return div.innerHTML;
 }
 
-/** 간이 마크다운 → HTML 변환 (코드블록, 인라인코드, 볼드, 리스트) */
+/** 마크다운 → HTML 변환 (marked 라이브러리 사용) */
 export function renderMarkdown(text) {
-    return text
-        .replace(/```(\w*)\n([\s\S]*?)```/g, '<div class="code-block-wrapper"><button class="copy-code-btn" title="복사">📋</button><pre><code>$2</code></pre></div>')
-        .replace(/`([^`]+)`/g, "<code>$1</code>")
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/^- (.+)$/gm, "<li>$1</li>")
-        .replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>")
-        .replace(/\n/g, "<br>");
+    return marked.parse(text);
 }
 
 /** 코드블록 복사 버튼 이벤트를 바인딩한다. */

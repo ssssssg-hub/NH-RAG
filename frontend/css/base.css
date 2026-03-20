@@ -19,6 +19,29 @@
     --border: rgba(255, 255, 255, 0.08);
     --source-bg: rgba(108, 92, 231, 0.08);
     --error: #ff6b6b;
+    --code-bg: rgba(0, 0, 0, 0.4);
+    --strong-color: #fff;
+    --heading-color: #fff;
+    --table-header-bg: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="light"] {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f7;
+    --bg-message-ai: #f9f9fb;
+    --bg-input: #f0f0f3;
+    --text-primary: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --accent: #6c5ce7;
+    --accent-hover: #5a4bd6;
+    --accent-glow: rgba(108, 92, 231, 0.15);
+    --border: rgba(0, 0, 0, 0.1);
+    --source-bg: rgba(108, 92, 231, 0.06);
+    --error: #e74c3c;
+    --code-bg: #f4f4f8;
+    --strong-color: #1d1d1f;
+    --heading-color: #1d1d1f;
+    --table-header-bg: rgba(0, 0, 0, 0.04);
 }
 
 html, body {

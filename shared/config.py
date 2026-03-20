@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 # 필수 환경변수 검증
-_REQUIRED_VARS = ["NH_RAG_OPENAI_API_BASE", "NH_RAG_OPENAI_API_KEY", "NH_RAG_EMBEDDING_MODEL", "NH_RAG_CHAT_MODEL"]
+_REQUIRED_VARS = ["NH_RAG_OPENAI_API_BASE", "NH_RAG_OPENAI_API_KEY", "NH_RAG_CHAT_MODEL"]
 _missing = [v for v in _REQUIRED_VARS if not os.getenv(v)]
 if _missing:
     print(f"[ERROR] 필수 환경변수가 설정되지 않았습니다: {', '.join(_missing)}", file=sys.stderr)
@@ -34,11 +34,18 @@ CHROMA_COLLECTION_NAME = "nh_rag_documents"
 # KùzuDB
 KUZU_DB_PATH = os.path.join(DATA_DIR, "kuzudb")
 
-# OpenAI API (내부)
+# OpenAI API (채팅 전용)
 OPENAI_API_BASE = os.getenv("NH_RAG_OPENAI_API_BASE")
 OPENAI_API_KEY = os.getenv("NH_RAG_OPENAI_API_KEY")
-OPENAI_EMBEDDING_MODEL = os.getenv("NH_RAG_EMBEDDING_MODEL")
 OPENAI_CHAT_MODEL = os.getenv("NH_RAG_CHAT_MODEL")
+
+# 로컬 임베딩 설정
+# backend: "local" (sentence-transformers) 또는 "fastembed"
+EMBEDDING_BACKEND = os.getenv("NH_RAG_EMBEDDING_BACKEND", "local")
+# local 모드: 모델 디렉토리 경로 또는 HuggingFace 모델명
+EMBEDDING_MODEL_PATH = os.getenv("NH_RAG_EMBEDDING_MODEL_PATH", str(PROJECT_ROOT / "models" / "ko-sroberta"))
+# fastembed 모드: 모델명
+FASTEMBED_MODEL_NAME = os.getenv("NH_RAG_FASTEMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 
 # 청킹 설정
 CHUNK_SIZE = int(os.getenv("NH_RAG_CHUNK_SIZE", "1500"))

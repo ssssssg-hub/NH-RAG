@@ -2,7 +2,6 @@ openai
 chromadb
 kuzu
 langchain
-langchain-openai
 langchain-community
 pydantic
 python-dotenv
@@ -10,5 +9,7 @@ rich
 fastapi
 uvicorn
 sse-starlette
+sentence-transformers
+fastembed
 pytest
 pytest-asyncio

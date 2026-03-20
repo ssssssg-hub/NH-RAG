@@ -33,6 +33,7 @@ const STATUS_MESSAGES = {
 let chatArea;
 let onSendCallback;
 let currentAbort = null;
+let _renderTimer = null;
 
 export function initChatArea({ onSend }) {
     chatArea = document.getElementById("chatArea");
@@ -70,9 +71,20 @@ export async function handleSend(text) {
         showStatusIndicator(contentEl, "generating");
 
         // 스트리밍 중에는 textContent로 실시간 표시, 완료 후 마크다운 렌더링
+        let rawText = "";
         const fullText = await processSSEStream(res, (event, data) => {
+            if (event === "token") {
+                rawText += data;
+                // 스트리밍 중 debounce 마크다운 렌더링 (80ms)
+                clearTimeout(_renderTimer);
+                _renderTimer = setTimeout(() => {
+                    contentEl.innerHTML = renderMarkdown(rawText);
+                    scrollToBottom();
+                }, 80);
+            }
             handleSSEEvent(event, data, contentEl, aiRow);
         });
+        clearTimeout(_renderTimer);
         if (fullText) {
             contentEl.innerHTML = renderMarkdown(fullText);
             bindCopyButtons(contentEl);
@@ -107,8 +119,6 @@ function handleSSEEvent(event, data, contentEl, aiRow) {
             break;
         case "token":
             removeStatusIndicator(contentEl);
-            contentEl.textContent += data;
-            scrollToBottom();
             break;
         case "no_results":
             removeStatusIndicator(contentEl);

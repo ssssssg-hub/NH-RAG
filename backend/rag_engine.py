@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """당신은 사내 지식 문서를 기반으로 답변하는 AI 어시스턴트입니다.
 제공된 컨텍스트를 기반으로 정확하게 답변하세요.
 컨텍스트에 없는 내용은 "제공된 문서에서 관련 정보를 찾을 수 없습니다"라고 답변하세요.
-답변 시 참조한 문서가 있다면 자연스럽게 언급해주세요."""
+답변 시 참조한 문서가 있다면 자연스럽게 언급해주세요.
+답변은 마크다운 형식으로 작성하세요. 제목(###), 볼드(**), 리스트(- 또는 1.), 코드블록(```) 등을 활용하여 가독성 높게 구성하세요."""
 
 
 class Source(BaseModel):
@@ -211,4 +212,8 @@ class RAGEngine:
 
         except Exception as e:
             logger.error(f"LLM 스트리밍 실패: {e}")
-            yield {"event": "error", "data": "응답 생성에 실패했습니다. 다시 시도해주세요."}
+            if "429" in str(e) and context:
+                fallback = "⚠️ LLM API 호출 한도 초과로 직접 답변이 불가합니다.\n\n**검색된 문서 내용:**\n\n" + context
+                yield {"event": "token", "data": fallback}
+            else:
+                yield {"event": "error", "data": "응답 생성에 실패했습니다. 다시 시도해주세요."}

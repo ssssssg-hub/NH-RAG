@@ -22,7 +22,7 @@ nh-rag/
 ├── shared/                  # 공통 모듈
 │   ├── config.py            # 환경변수 기반 설정 관리
 │   ├── db.py                # ChromaDB, KùzuDB, SQLite Repository
-│   └── embeddings.py        # OpenAI 호환 임베딩 API
+│   └── embeddings.py        # 로컬 임베딩 (sentence-transformers / fastembed)
 ├── backend/                 # FastAPI 백엔드
 │   ├── app.py               # API 서버 (SSE, 세션, 정적 파일 서빙)
 │   └── rag_engine.py        # RAG 검색 엔진 (Vector+Graph+RRF+LLM)
@@ -63,7 +63,8 @@ nh-rag/
 | Vector DB     | ChromaDB (임베디드, 코사인 유사도)               |
 | Graph DB      | KùzuDB (임베디드, Cypher 쿼리)                   |
 | Metadata DB   | SQLite                                           |
-| LLM/Embedding | OpenAI 호환 API (vLLM, Ollama, LiteLLM 등)       |
+| LLM           | OpenAI 호환 API (채팅/엔티티 추출 전용)          |
+| Embedding     | sentence-transformers + 한국어 모델 (로컬, CPU)  |
 | 문서 처리     | LangChain (로더, RecursiveCharacterTextSplitter) |
 | Frontend      | VanillaJS (ES Modules), 순수 CSS                 |
 | 테스트        | pytest, pytest-asyncio                           |
@@ -121,8 +122,12 @@ nh-rag/
 
                     ┌─────────────────────────────────┐
                     │  OpenAI 호환 API (내부망 LLM)    │
-                    │  - 임베딩: /embeddings           │
                     │  - 채팅: /chat/completions       │
+                    └─────────────────────────────────┘
+
+                    ┌─────────────────────────────────┐
+                    │  로컬 임베딩 (sentence-transformers) │
+                    │  - 한국어 모델 (CPU)             │
                     └─────────────────────────────────┘
 ```
 
@@ -158,7 +163,7 @@ documents/ 스캔
     │       │
     │       ├──→ LangChain 파싱 (.txt/.csv/.md)
     │       ├──→ RecursiveCharacterTextSplitter 청킹
-    │       ├──→ OpenAI 임베딩 API → ChromaDB 저장
+    │       ├──→ 로컬 임베딩 (sentence-transformers) → ChromaDB 저장
     │       └──→ LLM 엔티티/관계 추출 → KùzuDB 저장
     │
     └──→ 삭제된 문서 ──→ ChromaDB + KùzuDB + SQLite 정리
@@ -181,22 +186,33 @@ pip install -r requirements.txt
 ```env
 NH_RAG_OPENAI_API_BASE=<OpenAI 호환 API 엔드포인트>
 NH_RAG_OPENAI_API_KEY=<API 키>
-NH_RAG_EMBEDDING_MODEL=<임베딩 모델명>
 NH_RAG_CHAT_MODEL=<채팅 모델명>
+NH_RAG_EMBEDDING_MODEL_PATH=./models/ko-sroberta
 ```
 
-OpenAI 호환 API(`/v1/embeddings`, `/v1/chat/completions`)를 제공하는 서버라면 어떤 것이든 사용 가능함
+LLM API는 OpenAI 호환 API(`/v1/chat/completions`)를 제공하는 서버라면 어떤 것이든 사용 가능함
+
+임베딩은 sentence-transformers로 로컬 실행하며, 모델 파일을 `models/` 디렉토리에 배치해야 함
+
+> 외부망에서 모델 다운로드 후 내부망으로 복사:
+> ```python
+> from sentence_transformers import SentenceTransformer
+> m = SentenceTransformer("jhgan/ko-sroberta-multitask")
+> m.save("./models/ko-sroberta")
+> ```
 
 선택적 환경변수:
 
-| 변수                   | 기본값        | 설명                  |
-| ---------------------- | ------------- | --------------------- |
-| `NH_RAG_DOCUMENTS_DIR` | `./documents` | 임베딩 대상 문서 경로 |
-| `NH_RAG_DATA_DIR`      | `./data`      | 데이터 저장 경로      |
-| `NH_RAG_CHUNK_SIZE`    | `1500`        | 청크 크기 (문자 수)   |
-| `NH_RAG_CHUNK_OVERLAP` | `150`         | 청크 오버랩 (문자 수) |
-| `NH_RAG_VECTOR_TOP_K`  | `5`           | 벡터 검색 결과 수     |
-| `NH_RAG_GRAPH_TOP_K`   | `5`           | 그래프 검색 결과 수   |
+| 변수                        | 기본값                    | 설명                                          |
+| --------------------------- | ------------------------- | --------------------------------------------- |
+| `NH_RAG_EMBEDDING_BACKEND`  | `local`                   | 임베딩 백엔드 (`local` 또는 `fastembed`)       |
+| `NH_RAG_EMBEDDING_MODEL_PATH` | `./models/ko-sroberta` | sentence-transformers 모델 경로               |
+| `NH_RAG_DOCUMENTS_DIR`      | `./documents`             | 임베딩 대상 문서 경로                         |
+| `NH_RAG_DATA_DIR`           | `./data`                  | 데이터 저장 경로                              |
+| `NH_RAG_CHUNK_SIZE`         | `1500`                    | 청크 크기 (문자 수)                           |
+| `NH_RAG_CHUNK_OVERLAP`      | `150`                     | 청크 오버랩 (문자 수)                         |
+| `NH_RAG_VECTOR_TOP_K`       | `5`                       | 벡터 검색 결과 수                             |
+| `NH_RAG_GRAPH_TOP_K`        | `5`                       | 그래프 검색 결과 수                           |
 
 ### 3. 문서 임베딩
 

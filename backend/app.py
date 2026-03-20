@@ -4,11 +4,13 @@ SSE(Server-Sent Events) 기반 스트리밍 채팅 API를 제공하고,
 frontend/ 디렉토리의 정적 파일을 서빙한다.
 """
 
+import asyncio
 import json
 import logging
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -26,7 +28,16 @@ from backend.rag_engine import RAGEngine
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="NH-RAG", description="내부 문서 기반 RAG 채팅 서비스")
+
+@asynccontextmanager
+async def lifespan(app):
+    """서버 시작 시 임베딩 모델을 미리 로드하여 첫 질의 지연을 방지한다."""
+    from shared.embeddings import embed_text
+    await asyncio.to_thread(embed_text, "warm-up")
+    logger.info("임베딩 모델 warm-up 완료")
+    yield
+
+app = FastAPI(title="NH-RAG", description="내부 문서 기반 RAG 채팅 서비스", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -107,7 +118,7 @@ async def chat(request: ChatRequest):
     async def event_generator() -> AsyncGenerator[dict, None]:
         """SSE 이벤트 순서: session → token(반복) → sources → done"""
         try:
-            context, sources = rag_engine.search(request.message, history)
+            context, sources = await asyncio.to_thread(rag_engine.search, request.message, history)
 
             yield {"event": "session", "data": json.dumps({"session_id": session_id})}
 
@@ -145,7 +156,7 @@ if frontend_path.exists():
 
 def main():
     import uvicorn
-    uvicorn.run("backend.app:app", host="0.0.0.0", port=8080, reload=True)
+    uvicorn.run("backend.app:app", host="0.0.0.0", port=8080, reload=False)
 
 
 if __name__ == "__main__":

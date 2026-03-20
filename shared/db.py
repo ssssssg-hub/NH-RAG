@@ -69,7 +69,10 @@ class KuzuRepository:
 
     def __init__(self):
         try:
-            os.makedirs(os.path.dirname(KUZU_DB_PATH), exist_ok=True)
+            # kuzu 0.11+는 DB 경로가 이미 디렉토리로 존재하면 에러 → 부모만 생성
+            parent = os.path.dirname(KUZU_DB_PATH)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             self._db = kuzu.Database(KUZU_DB_PATH)
             self._conn = kuzu.Connection(self._db)
             self._init_schema()

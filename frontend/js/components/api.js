@@ -65,6 +65,7 @@ export async function processSSEStream(response, onEvent) {
     const decoder = new TextDecoder();
     let buffer = "";
     let eventType = "";
+    let dataLines = [];
     let fullText = "";
 
     try {
@@ -74,21 +75,29 @@ export async function processSSEStream(response, onEvent) {
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
-            // 마지막 줄은 불완전할 수 있으므로 다음 청크와 합친다
             buffer = lines.pop() || "";
 
             for (const line of lines) {
-                if (line.startsWith("event:")) {
-                    eventType = line.slice(6).trim();
-                } else if (line.startsWith("data:")) {
-                    const data = line.slice(5).trim();
-                    if (eventType === "token") fullText += data;
-                    onEvent(eventType, data);
+                const trimmed = line.replace(/\r$/, "");
+                if (trimmed.startsWith("event:")) {
+                    eventType = trimmed.slice(6).trim();
+                } else if (trimmed.startsWith("data:")) {
+                    // SSE 스펙: "data:" 뒤 첫 공백은 선택적 구분자이므로 제거
+                    const val = trimmed.slice(5);
+                    dataLines.push(val.startsWith(" ") ? val.slice(1) : val);
+                } else if (trimmed === "") {
+                    // 빈 줄 = 이벤트 디스패치 (SSE 스펙)
+                    if (eventType || dataLines.length) {
+                        const data = dataLines.join("\n");
+                        if (eventType === "token") fullText += data;
+                        onEvent(eventType, data);
+                        eventType = "";
+                        dataLines = [];
+                    }
                 }
             }
         }
     } catch (e) {
-        // AbortError는 사용자가 취소한 것이므로 무시
         if (e.name !== "AbortError") throw e;
     }
 
